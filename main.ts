@@ -93,10 +93,14 @@ for (let i = 0; i < written.rows.length; i++) {
   if (i > 0 && written.rows[i]!.implied_value_usd > written.rows[i - 1]!.implied_value_usd) fail('the written board.json rises in value as rank ascends', 1);
 }
 
-const thinCategories = radar.calibration.categories.filter((c) => c.peers < 3).length;
+const v = radar.validation;
 process.stdout.write(
   `peerline radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored ` +
-    `(${radar.early_size} early, ${radar.live_size} live set aside), peer median ${radar.calibration.global_median_ratio}, ` +
-    `${thinCategories} thin categories held toward the prior\n` +
+    `(ledger: ${radar.ledger.launched_priced} launched and priced, ${radar.ledger.token_recorded_no_cap} token recorded without a cap, ` +
+    `${radar.ledger.pre_token_excluded} pre-token excluded), value fit log10 value = ${radar.fit.intercept} + ${radar.fit.slope} x log10 TVL ` +
+    `on ${radar.fit.peers} peers, board checksum ${radar.board_checksum}\n` +
+    `peerline radar: leave-one-out over ${v.peers} peers: method median error x${Math.pow(10, v.method_median_abs_log10).toFixed(2)} ` +
+    `(${v.method_within_2x_pct}% within x2) against the flat baseline's x${Math.pow(10, v.baseline_median_abs_log10).toFixed(2)} ` +
+    `(${v.baseline_within_2x_pct}% within x2)\n` +
     `peerline radar: wrote board.json, data.js, dashboard (${pageFiles.length} files), screenshots (${shots.length} images) and dossier.json under ${out}\n`,
 );
