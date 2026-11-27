@@ -157,7 +157,7 @@
       '<div class="grid">' +
       '<div class="card"><h3>Implied value</h3><div class="big">' + money(r.implied_value_usd) + '</div>' +
       '<p class="note">TVL ' + money(r.tvl_usd) + ' \u00d7 the multipliers below</p></div>' +
-      multCard('Peer multiple', m.peer_multiple, 'Median mcap/TVL of ' + m.category_peers + ' live ' + esc(r.category || 'Uncategorized') + ' peers, shrunk toward the market median', m.peer_multiple / 1.5) +
+      multCard('Peer multiple', m.peer_multiple, 'Median mcap/TVL of ' + m.category_peers + ' live ' + esc(r.category || 'Uncategorized') + (m.category_peers === 1 ? ' peer' : ' peers') + ', winsorised, shrunk toward the market median and held inside the 0.02\u20133 band', m.peer_multiple / 3) +
       multCard('Momentum', m.momentum_multiplier, 'Seven-day TVL change of ' + (r.change_7d == null ? 'none recorded' : r.change_7d.toFixed(1) + '%') + ', damped and clamped', (m.momentum_multiplier - 0.8) / 0.6) +
       multCard('Seasoning', m.seasoning_multiplier, 'Running ' + ageLabel(r.age_days) + ' with no token (listed ' + esc(r.listed_at || 'date not recorded') + ')', (m.seasoning_multiplier - 0.85) / 0.3) +
       multCard('Breadth', m.breadth_multiplier, r.chains.length + ' chain' + (r.chains.length === 1 ? '' : 's') + ' of distribution', (m.breadth_multiplier - 1) / 0.18) +
@@ -202,7 +202,10 @@
       '<p><strong>Peer multiple.</strong> A lending market and a DEX do not trade at the same share of the value they ' +
       'custody, so there is no single constant: each category\u2019s multiple is the median mcap/TVL of its own live ' +
       'peers, shrunk toward the global median (' + R.calibration.global_median_ratio + ') so a three-peer category ' +
-      'cannot swing the board.</p>' +
+      'cannot swing the board. Two guards keep the calibration honest: each peer\u2019s ratio is winsorised at ' +
+      R.model.ratio_cap + ' before any median is taken, and the multiple used is held inside the ' +
+      R.model.multiple_floor + '\u2013' + R.model.multiple_cap + ' band \u2014 a launch priced above three times the value a ' +
+      'protocol custodies is a claim this board will not make.</p>' +
       '<p><strong>Momentum</strong> is damped: one week of TVL change moves value by at most +40% or \u221220%. ' +
       '<strong>Seasoning</strong> pays up to +15% for four years run without a token \u2014 time served is usage a launch ' +
       'would capitalise. <strong>Breadth</strong> pays 3% per extra chain, capped at six.</p>' +

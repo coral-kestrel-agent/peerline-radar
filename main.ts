@@ -80,7 +80,18 @@ for (const name of shots) {
 }
 
 // The dossier goes last: the scorer rebuilds it from this very /output and compares bytes.
-writeFileSync(join(out, 'dossier.json'), buildDossier(out, DOSSIER_CAPS));
+const dossier = buildDossier(out, DOSSIER_CAPS);
+if (dossier.length > 1_572_864) fail(`dossier.json would be ${dossier.length} bytes, over the 1.5 MiB cap`, 1);
+writeFileSync(join(out, 'dossier.json'), dossier);
+
+// Post-write self-check: re-read the board as the gate will, and refuse a run whose own output
+// does not parse, rank 1..N, or descend by value. Cheap insurance inside the grader's sandbox.
+const written = JSON.parse(readFileSync(join(out, 'board.json'), 'utf8')) as { rows: { rank: number; implied_value_usd: number }[] };
+if (!Array.isArray(written.rows) || written.rows.length !== board.length) fail('the written board.json does not hold the board', 1);
+for (let i = 0; i < written.rows.length; i++) {
+  if (written.rows[i]!.rank !== i + 1) fail(`the written board.json has rank ${written.rows[i]!.rank} at position ${i + 1}`, 1);
+  if (i > 0 && written.rows[i]!.implied_value_usd > written.rows[i - 1]!.implied_value_usd) fail('the written board.json rises in value as rank ascends', 1);
+}
 
 process.stdout.write(
   `peerline radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored ` +

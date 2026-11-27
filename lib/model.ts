@@ -8,10 +8,14 @@
 // calibration on any snapshot it is handed.
 //
 //   peers       = the snapshot's live-token protocols (a market cap is recorded)
-//   ratio(p)    = mcap_usd / tvl_usd for a peer with tvl_usd > 0
+//   ratio(p)    = mcap_usd / tvl_usd for a peer with tvl_usd > 0, winsorised at RATIO_CAP:
+//                 a thin-TVL peer trading at 80x its custody is a fact about that peer, not a
+//                 price for a whole category, so no single ratio enters a median above the cap
 //   G           = the median ratio across all peers
 //   C(c), n(c)  = the median ratio and the headcount of the peers in category c
-//   multiple(c) = (n(c) * C(c) + 4 * G) / (n(c) + 4)     (shrinkage toward the market median)
+//   multiple(c) = clamp((n(c) * C(c) + 4 * G) / (n(c) + 4), 0.02, 3)
+//                 (shrinkage toward the market median, then a published band: a launch priced
+//                 above 3x the value a protocol custodies is a claim this board will not make)
 //   momentum    = 1 + 0.4 * clamp(change_7d, -50, 100) / 100
 //   seasoning   = 0.85 + 0.30 * min(age_days, 1460) / 1460
 //   breadth     = 1 + 0.03 * min(chains - 1, 6)
@@ -53,6 +57,9 @@ export interface Snapshot {
 /** The model's fixed weights. The multiples are NOT here: they are calibrated per run. */
 export interface ModelConstants {
   shrink_peers: number;
+  ratio_cap: number;
+  multiple_floor: number;
+  multiple_cap: number;
   momentum_weight: number;
   momentum_floor_pct: number;
   momentum_cap_pct: number;
@@ -65,6 +72,9 @@ export interface ModelConstants {
 
 export const MODEL: ModelConstants = {
   shrink_peers: 4,
+  ratio_cap: 5,
+  multiple_floor: 0.02,
+  multiple_cap: 3,
   momentum_weight: 0.4,
   momentum_floor_pct: -50,
   momentum_cap_pct: 100,
@@ -76,7 +86,7 @@ export const MODEL: ModelConstants = {
 };
 
 /** The model's version label: the dashboard names it and the dossier quotes it. */
-export const MODEL_VERSION = 'peerline-1';
+export const MODEL_VERSION = 'peerline-2';
 
 /** Early rows: rankable pre-token protocols below the floor are carried down to this TVL. */
 export const EARLY_MIN_TVL_USD = 10_000_000;
@@ -206,23 +216,25 @@ export function isRankable(p: SnapshotProtocol): boolean {
  */
 export function calibrate(snapshot: Snapshot, model: ModelConstants = MODEL): Calibration {
   const peers = snapshot.protocols.filter((p) => p.mcap_usd !== null && p.tvl_usd > 0);
-  const ratios = peers.map((p) => p.mcap_usd! / p.tvl_usd);
+  const ratioOf = (p: SnapshotProtocol): number => Math.min(p.mcap_usd! / p.tvl_usd, model.ratio_cap);
+  const ratios = peers.map(ratioOf);
   const globalMedian = ratios.length > 0 ? median(ratios) : 0;
   const byCategory = new Map<string, number[]>();
   for (const p of peers) {
     const key = p.category ?? 'Uncategorized';
     const list = byCategory.get(key);
-    if (list === undefined) byCategory.set(key, [p.mcap_usd! / p.tvl_usd]);
-    else list.push(p.mcap_usd! / p.tvl_usd);
+    if (list === undefined) byCategory.set(key, [ratioOf(p)]);
+    else list.push(ratioOf(p));
   }
   const categories: CategoryCalibration[] = [...byCategory.entries()]
     .map(([category, list]) => {
       const med = median(list);
+      const shrunk = (list.length * med + model.shrink_peers * globalMedian) / (list.length + model.shrink_peers);
       return {
         category,
         peers: list.length,
         median_ratio: round4(med),
-        multiple: round4((list.length * med + model.shrink_peers * globalMedian) / (list.length + model.shrink_peers)),
+        multiple: round4(Math.min(model.multiple_cap, Math.max(model.multiple_floor, shrunk))),
       };
     })
     .sort((a, b) => bySlugOrder(a.category, b.category));
@@ -241,7 +253,10 @@ export function calibrate(snapshot: Snapshot, model: ModelConstants = MODEL): Ca
 /** The shrunk peer multiple for one category, from a finished calibration. */
 function multipleFor(cal: Calibration, category: string | null, model: ModelConstants): { multiple: number; peers: number } {
   const hit = cal.categories.find((c) => c.category === (category ?? 'Uncategorized'));
-  if (hit === undefined) return { multiple: cal.global_median_ratio, peers: 0 };
+  if (hit === undefined) {
+    const fallback = Math.min(model.multiple_cap, Math.max(model.multiple_floor, cal.global_median_ratio));
+    return { multiple: round4(fallback), peers: 0 };
+  }
   return { multiple: hit.multiple, peers: hit.peers };
 }
 
