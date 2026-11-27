@@ -385,6 +385,7 @@ bff7e0e pass 4 (previous HEAD, active submission 01a21c6c)
 
 ## Remaining before re-submission (parent agent, per brief)
 
-Refresh the usage rows, re-bundle, `check`, and submit HEAD `a72dcdf` before
-2026-12-14T10:00:00Z; the new submission supersedes `01a21c6c`. Quota after it: 7 of 10
-left. Update the two monitoring crons to the new submission id.
+Refresh the usage rows, re-bundle, `check`, and submit the new HEAD (this report's
+commit, on top of pass 6 `a72dcdf`) before 2026-12-14T10:00:00Z; the new submission
+supersedes `01a21c6c`. Quota after it: 7 of 10 left. Update the two monitoring crons
+to the new submission id.
