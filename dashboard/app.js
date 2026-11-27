@@ -145,6 +145,33 @@
     R.rows.forEach(function (x) { if (x.slug === slug) r = x; });
     if (!r) { app.innerHTML = '<p class="empty">No board row for ' + esc(slug) + '.</p>'; return; }
     var m = r.model;
+    // The thesis: where this row stands among its own category and the board, in the
+    // snapshot's own figures — computed here from the same rows the board shows.
+    var catName = r.category || 'Uncategorized';
+    var catRows = R.rows.filter(function (x) { return (x.category || 'Uncategorized') === catName; });
+    var tvlRank = 1 + catRows.filter(function (x) { return x.tvl_usd > r.tvl_usd; }).length;
+    var nextDown = null;
+    catRows.forEach(function (x) { if (x.tvl_usd < r.tvl_usd && (nextDown === null || x.tvl_usd > nextDown)) nextDown = x.tvl_usd; });
+    var changes = R.rows.map(function (x) { return x.change_7d; }).filter(function (v) { return v != null; })
+      .sort(function (a, b) { return a - b; });
+    var medChange = changes.length ? changes[Math.floor(changes.length / 2)] : null;
+    var thesis = 'Why it ranks here: ' + (tvlRank === 1
+      ? 'the largest of ' + catRows.length + ' ' + esc(catName) + ' rows by TVL' +
+        (nextDown ? ', ' + (r.tvl_usd / nextDown).toFixed(1) + '\u00d7 the next one down' : '')
+      : 'number ' + tvlRank + ' of ' + catRows.length + ' ' + esc(catName) + ' rows by TVL') + '. ';
+    if (r.change_7d != null && medChange != null) {
+      thesis += 'Its seven-day change of ' + r.change_7d.toFixed(1) + '% is ' +
+        (Math.abs(r.change_7d) <= Math.abs(medChange) ? 'milder' : 'steeper') +
+        ' than the board median of ' + medChange.toFixed(1) + '%. ';
+    }
+    thesis += m.category_peers >= 5
+      ? 'Its multiple is priced off ' + m.category_peers + ' live peers in its category.'
+      : m.category_peers >= 1
+        ? 'Its category has only ' + m.category_peers + ' live ' + (m.category_peers === 1 ? 'peer' : 'peers') +
+          ' in the snapshot, so the strengthened prior holds its multiple near the market median of ' +
+          R.calibration.global_median_ratio + ' instead of letting thin evidence set the price.'
+        : 'Its category has no live peer in the snapshot, so it is priced at the market median of ' +
+          R.calibration.global_median_ratio + '.';
     function multCard(title, value, note, frac) {
       return '<div class="card"><h3>' + title + '</h3><div class="big">\u00d7 ' + value.toFixed(3) + '</div>' +
         '<div class="bar"><i style="width:' + Math.max(3, Math.min(100, frac * 100)) + '%"></i></div>' +
@@ -154,10 +181,11 @@
       '<h2>' + esc(r.name) + (r.watchlist ? '<span class="badge">WATCHLIST</span>' : '<span class="badge early">EARLY</span>') + '</h2>' +
       '<p class="note">' + esc(r.slug) + ' · rank #' + r.rank + ' of ' + R.board_size + ' · ' + esc(r.category || 'Uncategorized') +
       ' · on ' + esc(r.chains.join(', ') || 'no chain recorded') + ' · records no token in the snapshot</p>' +
+      '<p class="thesis">' + thesis + '</p>' +
       '<div class="grid">' +
       '<div class="card"><h3>Implied value</h3><div class="big">' + money(r.implied_value_usd) + '</div>' +
       '<p class="note">TVL ' + money(r.tvl_usd) + ' \u00d7 the multipliers below</p></div>' +
-      multCard('Peer multiple', m.peer_multiple, 'Median mcap/TVL of ' + m.category_peers + ' live ' + esc(r.category || 'Uncategorized') + (m.category_peers === 1 ? ' peer' : ' peers') + ', winsorised, shrunk toward the market median and held inside the 0.02\u20133 band', m.peer_multiple / 3) +
+      multCard('Peer multiple', m.peer_multiple, 'Median mcap/TVL of ' + m.category_peers + ' live ' + esc(r.category || 'Uncategorized') + (m.category_peers === 1 ? ' peer' : ' peers') + ', winsorised, shrunk toward the market median under a prior that strengthens as the peer set thins, and held inside the 0.02\u20133 band', m.peer_multiple / 3) +
       multCard('Momentum', m.momentum_multiplier, 'Seven-day TVL change of ' + (r.change_7d == null ? 'none recorded' : r.change_7d.toFixed(1) + '%') + ', damped and clamped', (m.momentum_multiplier - 0.8) / 0.6) +
       multCard('Seasoning', m.seasoning_multiplier, 'Running ' + ageLabel(r.age_days) + ' with no token (listed ' + esc(r.listed_at || 'date not recorded') + ')', (m.seasoning_multiplier - 0.85) / 0.3) +
       multCard('Breadth', m.breadth_multiplier, r.chains.length + ' chain' + (r.chains.length === 1 ? '' : 's') + ' of distribution', (m.breadth_multiplier - 1) / 0.18) +
@@ -198,11 +226,16 @@
       'its token the multiple it already pays comparable live protocols, what would that token be worth? Every ' +
       'ingredient comes from the snapshot\u2019s ten fields; the code names no protocol.</p>' +
       '<div class="formula">implied = TVL \u00d7 peer_multiple(category) \u00d7 momentum(7d change) \u00d7 seasoning(age) \u00d7 breadth(chains)\n' +
-      'peer_multiple(c) = (n\u00b7median_c + 4\u00b7median_all) / (n + 4), from the snapshot\u2019s live set</div>' +
+      'peer_multiple(c) = (n\u00b7median_c + (4 + 12/n)\u00b7median_all) / (n + 4 + 12/n), from the snapshot\u2019s live set</div>' +
       '<p><strong>Peer multiple.</strong> A lending market and a DEX do not trade at the same share of the value they ' +
       'custody, so there is no single constant: each category\u2019s multiple is the median mcap/TVL of its own live ' +
-      'peers, shrunk toward the global median (' + R.calibration.global_median_ratio + ') so a three-peer category ' +
-      'cannot swing the board. Two guards keep the calibration honest: each peer\u2019s ratio is winsorised at ' +
+      'peers, shrunk toward the global median (' + R.calibration.global_median_ratio + '). The shrinkage prior is ' +
+      'count-aware \u2014 weight 4 + 12/n against the category\u2019s own n peers \u2014 so the thinner the peer set, the ' +
+      'harder the market median pulls: a category with one live peer is priced mostly off the market, because one ' +
+      'peer is an anecdote, not a market. On this snapshot ' +
+      R.calibration.categories.filter(function (c) { return c.peers < 3; }).length +
+      ' categories have fewer than three live peers and are held toward the prior that way. Two guards keep the ' +
+      'calibration honest: each peer\u2019s ratio is winsorised at ' +
       R.model.ratio_cap + ' before any median is taken, and the multiple used is held inside the ' +
       R.model.multiple_floor + '\u2013' + R.model.multiple_cap + ' band \u2014 a launch priced above three times the value a ' +
       'protocol custodies is a claim this board will not make.</p>' +

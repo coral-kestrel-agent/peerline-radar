@@ -1,6 +1,135 @@
+# Improvement passes 3–4 (2026-11-27, after the first accepted submission)
+
+The first submission of this entry (submission `01a21c64-5372-729a-be8e-99642dd85696`,
+commit `63a8920`) passed every validity check. These passes exist to win more of the
+pairwise games that decide the places; a re-submission before the deadline supersedes it.
+
+## What the judge actually sees, and its criteria (RULES.txt, "The judge", verbatim)
+
+The judge (an AI model, reasoning effort high) reads **only the dossier**: the three
+screenshots (board, a protocol's detail view, a filtered view) and the dashboard's source
+text (≤65,536 bytes, files in path order, whole while they fit). It never sees board.json
+or lib/model.ts directly — the model reaches it through the dashboard's model view, the
+detail view's audit trail, and the numbers visible in the screenshots. Its criteria,
+most important first, decided at the first criterion where two entries differ:
+
+1. A working radar: full watchlist coverage, pre-token protocols ranked by a stated
+   implied value, screenshots and code in agreement.
+2. The value model: implied value follows from the snapshot's own figures — TVL,
+   seven-day growth, time run with no token — not a hardcoded list of names; live-token
+   protocols separated from pre-token ones.
+3. Farm plans: concrete steps with what they cost and how long they take, not slogans.
+4. The dashboard as a page: sortable and filterable, readable at a glance, a detail
+   view for each protocol.
+5. It looks made: chosen palette, consistent spacing, type that reads.
+
+## Weaknesses found in the peerline-2 entry, ranked by expected impact
+
+1. **Thin peer sets priced the top of the board (criteria 2 and 1).** Eight categories
+   calibrate off ≤2 live peers. Risk Curators has exactly **one** live peer — Api3 at a
+   winsorised 2.97x — and the flat prior of 4 pseudo-peers still let it set a 0.730
+   multiple: Steakhouse Financial was priced at $2.26B and Gauntlet at $1.34B, the top
+   of the board was seven Risk Curators in the top ten, and the detail screenshot itself
+   read "Median mcap/TVL of 1 live Risk Curators peer". Chain (1 peer) priced at 0.740
+   and Collateral Management / Prediction Market (1 peer each, at the winsorise cap)
+   at 1.135 — the board's maximum multiple. A judge weighing criterion 2 sees a model
+   whose loudest prices rest on single anecdotes.
+2. **Farm plans were near-identical across rows (criterion 3).** Steps 1, 5, 6 and 7
+   differed only in the protocol's name and figures; the second action fell back to a
+   generic "use one more feature" line for curators, allocators, RWA, stables and
+   chains; and gas was priced off the capital tier, not the chain — the plan quoted
+   "about $10 of gas on Base", where a transaction costs cents, and would have quoted
+   the same on Ethereum, where it costs more.
+3. **The filtered screenshot spent its slot on the weakest view (criteria 1 and 4).**
+   It showed the Risk Curators + watchlist filter — the same one-category story as the
+   board — instead of demonstrating the filter across the board's breadth.
+4. **The detail view showed multipliers but no thesis (criteria 1 and 2 at a glance).**
+   Nothing on the page said where the protocol stands among its own category, or how
+   its week compares with the board's, in the snapshot's own figures.
+
+## Pass 3 — the model (`lib/model.ts`, `main.ts`; model version peerline-3)
+
+- **Count-aware prior.** `prior(c) = shrink_peers + thin_prior / n(c)` pseudo-peers at
+  the market median (4 + 12/n), replacing the flat 4. Thick categories barely move
+  (Lending n=15: 0.1401 → 0.1412; Dexs n=11: 0.2962 → 0.2875); thin ones are held to
+  the market: Risk Curators 0.730 → **0.334**, Chain 0.740 → 0.337, the board's maximum
+  multiple falls **1.1351 → 0.5111**. Steakhouse's implied value falls $2.26B → $1.03B
+  (still rank 1 — its TVL is 1.7x the next protocol's, which the detail view now
+  states), Gauntlet $1.34B → $611M, and the top 15 spans six categories instead of
+  three. This is the root fix for the failure mode pass 2 patched case-by-case
+  (Predict Fun): no category can be priced off an anecdote again, on any snapshot.
+- **Farm plans differentiated by the protocol's own record.** Gas is priced by chain
+  class (`gasFor`: Ethereum $12, Tron $3, Bitcoin $4, the cheap chains $2, unlisted $5)
+  and every step's cost line follows it. Second actions now exist for curators and
+  allocators (a second vault, a different risk profile), RWA (hold through a monthly
+  attestation), stables (mint *and* provide liquidity), chains (be a chain user, not
+  only a bridge in), payments (route real payments) and staking (claim and restake).
+  The cadence step gains a third variant for surging protocols (+10% or more on the
+  week: add in stages, stop the first week TVL falls), and the monthly watch step
+  checks each deployment separately for protocols on four or more chains. Still seven
+  steps per row, now 137–305 characters each.
+- `main.ts`'s run summary now reports how many thin categories were held toward the
+  prior (21 on this snapshot), so the run's own log states the guard fired.
+
+## Pass 4 — the dashboard (`dashboard/app.js`, `dashboard/app.css`, screenshots)
+
+- **Detail view gains a thesis strip** ("Why it ranks here"), computed in the page from
+  the same rows the board shows: the protocol's TVL rank within its category and its
+  multiple over the next one down, its seven-day change against the board median, and
+  — for thin categories — a plain statement that the strengthened prior holds its
+  multiple near the market median instead of letting thin evidence set the price.
+  The peer-multiple card's note now names the count-aware prior too.
+- **The model view states the new prior** in its formula line and prose, with the
+  count of thin categories on this snapshot computed from the calibration table it
+  prints below — the judge can check the claim against the table on the same page.
+- **Screenshots retaken** from the new output at 1440x1000: the board (top implied
+  $1.03B, peer multiples now visibly varying down the page), Steakhouse Financial's
+  detail (thesis strip, curator-specific farm plan, $2 Base gas), and the filtered
+  view switched to the **Ethereum chain filter — 85 rows across every category**,
+  ranks preserved, replacing the one-category Risk Curators filter.
+
+## Gate checklist — re-measured after pass 4
+
+| Gate (RULES.txt) | Requirement | Measured |
+| --- | --- | --- |
+| board_file | 100–4,000 rows, ≤8 MiB | **167 rows**, 309,794 bytes |
+| coverage | every watchlist slug present | **40 / 40** |
+| sorted_by_value | ranks exactly 1..N, implied non-increasing | verified by `boardIssue` + post-write self-check |
+| farm steps | 3–12 strings, each 20–600 chars trimmed | **7 per row**, lengths **137–305** chars |
+| implied values | positive integers ≤ 1e14, not all equal | $771,746 … $1,034,225,990 |
+| dashboard_files | index.html + ≥1 css + ≥1 js, ≤400 files, ≤4 MiB, no http(s) in attributes/CSS/JS | **3 files, 23,166 bytes total** (< 64 KB guidance, so the judge reads every source file whole), zero http(s) strings |
+| screenshots | 3–4 images, each ≤512 KiB, long side ≤1440, short side ≥800 | **3 PNGs, 1440x1000**, 194,641 / 224,261 / 196,066 bytes |
+| dossier_matches | byte-identical to `buildDossier(output, {text_max_bytes: 65536})`, ≤1.5 MiB | **844,506 bytes**; independently rebuilt from the output dir with the vendored library — **byte-equal** (also smaller than peerline-2's 909,901, which is the side of the size tie-break to be on) |
+| vendor file | `vendor/makefun-board.ts` byte-for-byte | SHA-256 `9ca51b6e5cd84fe46cb0efa61e2ea99365a1fb0e21f2b75e6007f977f0dc326e` — unchanged |
+| run_deterministic | two runs, identical outputs | **yes — hashes below** |
+
+## Determinism — sha256 of every output file, two consecutive runs (identical)
+
+```
+da24190522e83a89fc58c8ed47996519434d055406db0c6454a2d18ebd4df24c  board.json
+9d457aafb4838afed87e7981faafcc4e44dfe5155ab29f1dfc1340c5e157be9c  data.js
+f531bacae011b6e1176d074279f83ec3b005a77af6dd3b4b4825394348aea795  dossier.json
+0e99446da7b36432caa1e1d89ee2895592f73f8db55661b6793ed87a573a827e  dashboard/app.css
+a3bfc530308b834661103d66474683f547ef813919f76d15c2270f551254baad  dashboard/app.js
+0b66956b5519ab895b8eca3a5439426ee8ebc1eac1b57a2764938553874103fb  dashboard/index.html
+fbb45491fe22062ce04a112cd5c04f197f4bd61e068d0d6af156b5394e4b3380  screenshots/1-board.png
+e8cc6c5f12e0ad6e8f4c8d4829cb235e68816be4b5cf54dbca8cb5980f7a00dd  screenshots/2-detail.png
+93b234f3b656b579687359d1c18643bf3f575492b9411b10262a59675504c3bd  screenshots/3-filtered.png
+```
+
+## Git log (improvement passes)
+
+```
+pass 4: detail thesis strip, model view states the count-aware prior, Ethereum-filter screenshot
+pass 3: count-aware prior for thin categories, chain-priced gas, differentiated farm plans
+```
+
+---
 # BUILD REPORT — token-radar-01 entry "Peerline Radar"
 
-Built locally in this repository. **Not submitted, not pushed anywhere.** Kit used under the
+Built locally in this repository; the peerline-2 state of this report was submitted and
+accepted on 2026-11-27 (submission `01a21c64-5372-729a-be8e-99642dd85696` at commit
+`63a8920`), and passes 3–4 above improve on it. Kit used under the
 user's explicit approval of 2026-11-27 ("Boleh, jalanin build-nya pakai konten kit").
 No conflict with `requirements.json` was found; where the brief and the kit differed in
 emphasis, the kit's `RULES.txt` gate text was followed.
@@ -31,7 +160,7 @@ emphasis, the kit's `RULES.txt` gate text was followed.
   headless shell from `~/.cache/ms-playwright` was used instead.
 - `LICENSE` — MIT, from the kit starter.
 
-## The model (peerline-2) — design and rationale
+## The model (peerline-2, superseded by peerline-3 in pass 3 above) — design and rationale
 
 Question answered: *if a protocol that records no token had one trading at the value the
 market already pays comparable live-token protocols, what would it be worth, and how should a
@@ -122,9 +251,8 @@ f2bb7a9 pass 2: winsorised calibration, multiple band, output self-check
 (+ this report's commit)
 ```
 
-## Remaining before any submission (not done here, per brief)
+## Remaining before any re-submission (not done here, per brief)
 
-Push to a public GitHub repo created after the competition opened (2026-11-14T10:00:00Z),
-link a Solana wallet to the account, bundle the recorded sessions with the kit CLI
-(`node cli/makefun.mjs bundle …`, with the run-record flags and `--muse-usage`), run
-`check`, then `submit` before **2026-12-14T10:00:00Z**.
+Bundle the recorded sessions with the kit CLI (`node cli/makefun.mjs bundle …`, with the
+run-record flags and `--muse-usage`), run `check`, then `submit` the new HEAD before
+**2026-12-14T10:00:00Z**; the last submission before the deadline is the final entry.
