@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Peerline Radar — pre-token protocols ranked by peer-calibrated implied value</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">
+    <span class="blip" aria-hidden="true"></span>
+    <div>
+      <h1>Peerline Radar</h1>
+      <p class="tag">Pre-token protocols, ranked by the value the market already pays their live peers.</p>
+    </div>
+  </div>
+  <nav class="tabs" aria-label="Views">
+    <a href="#/" data-view="board">Board</a>
+    <a href="#/live" data-view="live">Live peers</a>
+    <a href="#/model" data-view="model">The model</a>
+  </nav>
+</header>
+<p class="meta" id="meta">Loading the snapshot…</p>
+<main id="app" tabindex="-1"></main>
+<footer class="foot" id="foot"></footer>
+<script src="../data.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
