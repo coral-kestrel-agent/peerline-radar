@@ -13,7 +13,8 @@
 //                 price for a whole category, so no single ratio enters a median above the cap
 //   G           = the median ratio across all peers
 //   C(c), n(c)  = the median ratio and the headcount of the peers in category c
-//   multiple(c) = clamp((n(c) * C(c) + 4 * G) / (n(c) + 4), 0.02, 3)
+//   prior(c)    = 4 + 12 / n(c) pseudo-peers at G: the prior strengthens as the peer set thins
+//   multiple(c) = clamp((n(c) * C(c) + prior(c) * G) / (n(c) + prior(c)), 0.02, 3)
 //                 (shrinkage toward the market median, then a published band: a launch priced
 //                 above 3x the value a protocol custodies is a claim this board will not make)
 //   momentum    = 1 + 0.4 * clamp(change_7d, -50, 100) / 100
@@ -24,7 +25,11 @@
 // Why these parts. The multiple is a peer multiple, not a constant: a lending market and a DEX
 // do not trade at the same share of the value they custody, and the snapshot's own live set is
 // the only honest place to learn the difference. Shrinkage keeps a three-peer category from
-// swinging the board. Momentum is damped (a week of TVL growth moves value by at most 40%)
+// swinging the board, and the prior itself strengthens as the peer set thins: a category with
+// one live peer is an anecdote, not a market, so its median is blended against sixteen
+// pseudo-peers at the market median and can tilt a price but never set one. (Pass 2's flat
+// prior of 4 let a single 2.97x peer price a whole category at 0.73x and put two vault
+// curators above $1B; the count-aware prior is the root fix.) Momentum is damped (a week of TVL growth moves value by at most 40%)
 // because one week is weather, not climate. Seasoning pays a bounded premium for time served
 // without a token: the longer a protocol has run tokenless, the more usage a launch would be
 // capitalising. Breadth pays a small premium per extra chain, capped, because distribution is
@@ -57,6 +62,7 @@ export interface Snapshot {
 /** The model's fixed weights. The multiples are NOT here: they are calibrated per run. */
 export interface ModelConstants {
   shrink_peers: number;
+  thin_prior: number;
   ratio_cap: number;
   multiple_floor: number;
   multiple_cap: number;
@@ -72,6 +78,7 @@ export interface ModelConstants {
 
 export const MODEL: ModelConstants = {
   shrink_peers: 4,
+  thin_prior: 12,
   ratio_cap: 5,
   multiple_floor: 0.02,
   multiple_cap: 3,
@@ -86,7 +93,7 @@ export const MODEL: ModelConstants = {
 };
 
 /** The model's version label: the dashboard names it and the dossier quotes it. */
-export const MODEL_VERSION = 'peerline-2';
+export const MODEL_VERSION = 'peerline-3';
 
 /** Early rows: rankable pre-token protocols below the floor are carried down to this TVL. */
 export const EARLY_MIN_TVL_USD = 10_000_000;
@@ -229,7 +236,8 @@ export function calibrate(snapshot: Snapshot, model: ModelConstants = MODEL): Ca
   const categories: CategoryCalibration[] = [...byCategory.entries()]
     .map(([category, list]) => {
       const med = median(list);
-      const shrunk = (list.length * med + model.shrink_peers * globalMedian) / (list.length + model.shrink_peers);
+      const prior = model.shrink_peers + model.thin_prior / list.length;
+      const shrunk = (list.length * med + prior * globalMedian) / (list.length + prior);
       return {
         category,
         peers: list.length,
@@ -296,6 +304,27 @@ function chainOf(p: SnapshotProtocol): string {
   return p.chains.length > 0 ? p.chains[0]! : 'its main chain';
 }
 
+/** Chains where a transaction costs cents, not dollars: the L2s and the cheap L1s. */
+const CHEAP_CHAINS = new Set([
+  'Base', 'Arbitrum', 'Optimism', 'Polygon', 'Binance', 'BSC', 'Avalanche', 'Solana', 'Monad',
+  'zkSync Era', 'Linea', 'Scroll', 'Mantle', 'Gnosis', 'Fantom', 'Sonic', 'Near', 'Sui', 'Aptos',
+  'Unichain', 'Ink', 'Katana', 'Arc', 'Robinhood Chain', 'Pharos', 'Flare', 'Corn', 'BSquared',
+]);
+
+/**
+ * A realistic gas budget for one transaction on a chain, in dollars. Ethereum mainnet is the
+ * expensive case; the cheap chains cost cents, so the plan budgets a dollar or two and says so;
+ * anything unlisted gets a middle figure. A plan that quotes $10 of gas on Base, or $2 on
+ * Ethereum, is a plan a farmer learns not to trust, so the figure follows the chain.
+ */
+function gasFor(chain: string): number {
+  if (chain === 'Ethereum') return 12;
+  if (chain === 'Tron') return 3;
+  if (chain === 'Bitcoin') return 4;
+  if (CHEAP_CHAINS.has(chain)) return 2;
+  return 5;
+}
+
 /** Position size for one farm wallet, stepped by the protocol's own TVL. */
 function capitalFor(p: SnapshotProtocol): number {
   if (p.tvl_usd >= 5_000_000_000) return 300;
@@ -329,6 +358,8 @@ function coreAction(p: SnapshotProtocol, capital: number, chain: string): string
   if (c.includes('prediction')) return `Fund ${n} with $${capital} and take one position in a market you actually have a view on.`;
   if (c.includes('insurance')) return `Buy $${capital} of cover from ${n} on ${chain} for an asset you hold, and keep the policy to expiry.`;
   if (c.includes('privacy')) return `Deposit $${capital} into ${n} on ${chain} through its own interface and make one shielded transfer to your second wallet.`;
+  if (c === 'chain') return `Bridge $${capital} of USDC onto ${n}'s own chain and put it to work in one native app there, so the wallet is a chain user from the first week.`;
+  if (c.includes('payment')) return `Route $${capital} of real payments through ${n} over the hold window instead of parking it: pay your own second wallet in instalments if you have nothing else to pay for.`;
   return `Deposit $${capital} of USDC into ${n} on ${chain} through its own app and leave the position open.`;
 }
 
@@ -340,6 +371,12 @@ function secondAction(p: SnapshotProtocol, chain: string): string {
   if (c.includes('dex') || c.includes('aggregator')) return `Withdraw a quarter of the liquidity and re-add it a week later, so ${n} records the wallet as a returning provider.`;
   if (c.includes('perpetual') || c.includes('derivative')) return `Open and close one more small trade on a different market of ${n}, keeping total fees under $5.`;
   if (c.includes('bridge')) return `Bridge a smaller amount back the other way once, so ${n} sees the wallet travel in both directions.`;
+  if (c.includes('curator') || c.includes('allocator')) return `Move a fifth of the position into a second ${n} vault with a different risk profile, so the wallet holds more than one curated strategy and not a single deposit.`;
+  if (c.includes('rwa')) return `When ${n} posts its next monthly report or attestation, read it and note the date in your farm log: holding through a reporting date is the behaviour a real holder shows.`;
+  if (c.includes('stable')) return `Provide a small amount of the minted asset as liquidity in its main pool on ${chain}, so the wallet both mints the asset and helps it trade.`;
+  if (c.includes('staking') || c.includes('restak')) return `Claim the staking rewards once and restake them, so the wallet compounds the way a holder does instead of only depositing.`;
+  if (c === 'chain') return `Use one more native app on ${n}'s chain each week — a swap, a name, a small mint — so the wallet's history is spread across the chain and not one bridge in.`;
+  if (c.includes('payment')) return `Pay one real bill or invoice through ${n} if it offers the route, and keep the receipt in your farm log.`;
   return `Use one more feature of ${n} on ${chain} beyond the core position, such as its dashboard, a vote or a second product, once.`;
 }
 
@@ -353,18 +390,27 @@ export function farmSteps(p: SnapshotProtocol, age: number | null): string[] {
   const chain = chainOf(p);
   const capital = capitalFor(p);
   const hold = holdDaysFor(age);
-  const shrinking = (p.change_7d ?? 0) <= -10;
-  const gas = capital >= 200 ? 10 : capital >= 100 ? 6 : 4;
+  const growth = p.change_7d ?? 0;
+  const shrinking = growth <= -10;
+  const surging = growth >= 10;
+  const gas = gasFor(chain);
+  const smallGas = Math.max(1, Math.round(gas / 3));
   const cadence = shrinking
     ? `Re-check the position every two weeks rather than adding to it: ${p.name}'s TVL fell this week, so let the protocol prove it can hold value before you commit more.`
-    : `Repeat one small qualifying action on ${p.name} every week, on roughly the same day, so the wallet builds a steady history instead of one burst.`;
+    : surging
+      ? `Add in stages while the growth lasts: repeat the core action at half size each week, and stop adding the first week ${p.name}'s TVL falls — a surge is when late size gets farmed hardest.`
+      : `Repeat one small qualifying action on ${p.name} every week, on roughly the same day, so the wallet builds a steady history instead of one burst.`;
+  const watchStep =
+    p.chains.length >= 4
+      ? `Once a month, open ${p.name}'s own site and its official announcements and look for a points, rewards or governance page for each of its ${p.chains.length} chain deployments; follow only links the protocol itself publishes. Cost: nothing to look, and never pay a third party to claim. Time: 15 minutes a month.`
+      : `Once a month, open ${p.name}'s own site and its official announcements and look for a points, rewards or governance page; follow only links the protocol itself publishes. Cost: nothing to look, and never pay a third party to claim. Time: 10 minutes a month.`;
   return [
     `Set up one dedicated wallet for ${p.name} and fund it from your main wallet in a single transfer. Cost: about $${gas} of gas on ${chain}. Time: 10 minutes.`,
     `${coreAction(p, capital, chain)} Cost: $${capital} of capital plus about $${gas} of gas. Time: 20 minutes to set up.`,
-    `${secondAction(p, chain)} Cost: about $3 of gas. Time: 15 minutes.`,
-    `${cadence} Cost: about $2 of gas per action. Time: 10 minutes a week.`,
+    `${secondAction(p, chain)} Cost: about $${smallGas} of gas. Time: 15 minutes.`,
+    `${cadence} Cost: about $${smallGas} of gas per action. Time: 10 minutes a week.`,
     `Keep the position open for at least ${hold} days, across at least two weekly snapshots, before you judge it. Cost: the $${capital} stays committed. Time: ${hold} days.`,
-    `Once a month, open ${p.name}'s own site and its official announcements and look for a points, rewards or governance page; follow only links the protocol itself publishes. Cost: nothing to look, and never pay a third party to claim. Time: 10 minutes a month.`,
+    watchStep,
     `Keep a farm log for ${p.name}: wallet address, dates, amounts and transaction hashes, and note the day you would exit if no token ever comes. Cost: nothing. Time: 5 minutes a week.`,
   ];
 }

@@ -93,8 +93,10 @@ for (let i = 0; i < written.rows.length; i++) {
   if (i > 0 && written.rows[i]!.implied_value_usd > written.rows[i - 1]!.implied_value_usd) fail('the written board.json rises in value as rank ascends', 1);
 }
 
+const thinCategories = radar.calibration.categories.filter((c) => c.peers < 3).length;
 process.stdout.write(
   `peerline radar: ${snapshot.protocols.length} protocols, ${snapshot.watchlist.length} on the watchlist, ${board.length} rows scored ` +
-    `(${radar.early_size} early, ${radar.live_size} live set aside), peer median ${radar.calibration.global_median_ratio}\n` +
+    `(${radar.early_size} early, ${radar.live_size} live set aside), peer median ${radar.calibration.global_median_ratio}, ` +
+    `${thinCategories} thin categories held toward the prior\n` +
     `peerline radar: wrote board.json, data.js, dashboard (${pageFiles.length} files), screenshots (${shots.length} images) and dossier.json under ${out}\n`,
 );
