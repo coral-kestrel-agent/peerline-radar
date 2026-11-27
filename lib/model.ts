@@ -126,7 +126,7 @@ export const MODEL: ModelConstants = {
 };
 
 /** The model's version label: the dashboard names it and the dossier quotes it. */
-export const MODEL_VERSION = 'peerline-4';
+export const MODEL_VERSION = 'peerline-5';
 
 /** How many live-token protocols the dashboard's Live view carries, by market cap. */
 export const LIVE_ROWS = 24;
@@ -154,6 +154,8 @@ export interface OddsModel {
   bands: OddsBand[];
   unknown_age_odds: number;
   global_launched_share: number;
+  /** Per-category launch record: protocols, launched count, share — the raw evidence behind the odds priors. */
+  categories: { category: string; protocols: number; launched: number; launched_share: number }[];
 }
 
 /** The leave-one-out validation of the shipped method against the flat-multiple baseline. */
@@ -165,6 +167,9 @@ export interface Validation {
   baseline_median_abs_log10: number;
   baseline_within_2x_pct: number;
   baseline_median_log10: number;
+  multiples_median_abs_log10: number;
+  multiples_within_2x_pct: number;
+  multiples_median_log10: number;
   by_category: { category: string; peers: number; median_abs_log10: number; within_2x_pct: number }[];
 }
 
@@ -463,11 +468,15 @@ export function fitOdds(snapshot: Snapshot, model: ModelConstants = MODEL): { od
     launched_share: round4(globalShare[b]!),
     odds: round4(oddsFromShare(null, globalShare[b]!)),
   }));
+  const categories = [...catTotals.entries()]
+    .map(([category, t]) => ({ category, protocols: t.n, launched: t.l, launched_share: round4(t.l / t.n) }))
+    .sort((a, b) => b.protocols - a.protocols || (a.category < b.category ? -1 : 1));
   return {
     odds: {
       bands,
       unknown_age_odds: round4(oddsFromShare(null, globalShareAll)),
       global_launched_share: round4(globalShareAll),
+      categories,
     },
     oddsFor: (p) => {
       const b = bandOf(p);
@@ -496,16 +505,27 @@ export function validate(snapshot: Snapshot, model: ModelConstants = MODEL): Val
   const peers = snapshot.protocols.filter(isPricePeer);
   const methodErr: number[] = [];
   const baseErr: number[] = [];
+  const multErr: number[] = [];
   const perCat = new Map<string, number[]>();
   peers.forEach((p, i) => {
     const rest = peers.filter((_, j) => j !== i);
     const fit = fitLine(rest);
-    const baseRatio = median(rest.map((q) => Math.min(q.mcap_usd! / q.tvl_usd, 5)));
+    const ratios = rest.map((q) => Math.min(q.mcap_usd! / q.tvl_usd, 5));
+    const baseRatio = median(ratios);
+    // The previous model, scored in the same folds: the held-out peer's category median
+    // multiple, shrunk toward the fold's global median with six pseudo-observations.
+    const catRatios = rest.filter((q) => (q.category ?? 'Uncategorized') === (p.category ?? 'Uncategorized'))
+      .map((q) => Math.min(q.mcap_usd! / q.tvl_usd, 5));
+    const shrunk = [...catRatios, ...Array.from({ length: 6 }, () => baseRatio)];
+    const multRatio = median(shrunk);
+    const mom = momentumOf(p, model).mult;
     const actual = p.mcap_usd!;
     const mErr = Math.log10(conditionalValue(p, fit, model) / actual);
     const bErr = Math.log10((p.tvl_usd * baseRatio) / actual);
+    const xErr = Math.log10((p.tvl_usd * multRatio * mom) / actual);
     methodErr.push(mErr);
     baseErr.push(bErr);
+    multErr.push(xErr);
     const key = p.category ?? 'Uncategorized';
     const list = perCat.get(key);
     if (list === undefined) perCat.set(key, [mErr]);
@@ -521,6 +541,9 @@ export function validate(snapshot: Snapshot, model: ModelConstants = MODEL): Val
     baseline_median_abs_log10: round4(medAbs(baseErr)),
     baseline_within_2x_pct: round2(within2(baseErr)),
     baseline_median_log10: round4(baseErr.length === 0 ? 0 : median(baseErr)),
+    multiples_median_abs_log10: round4(medAbs(multErr)),
+    multiples_within_2x_pct: round2(within2(multErr)),
+    multiples_median_log10: round4(multErr.length === 0 ? 0 : median(multErr)),
     by_category: [...perCat.entries()]
       .filter(([, errs]) => errs.length >= 4)
       .map(([category, errs]) => ({ category, peers: errs.length, median_abs_log10: round4(medAbs(errs)), within_2x_pct: round2(within2(errs)) }))
@@ -904,6 +927,8 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
   const board = buildBoard(snapshot, model);
   const live = liveRows(snapshot);
   const boardJson = JSON.stringify({ rows: board });
+  // The checksum covers exactly the bytes main.ts writes to board.json (no trailing
+  // newline), so anyone can recompute it from the file itself and verify the board.
   const radar: RadarData = {
     as_of: snapshot.as_of,
     source: snapshot.source,
